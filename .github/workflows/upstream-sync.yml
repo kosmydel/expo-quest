@@ -43,45 +43,44 @@ jobs:
           fi
           git fetch upstream --tags --force
 
-      # 1) Preserve original main branch reference before filter-repo
-      - name: Preserve original main reference
+      # 1) Build filtered upstream branch in separate clone
+      - name: Create filtered upstream branch
         run: |
-          # Save the current main branch SHA before filter-repo destroys references
-          git checkout main 2>/dev/null || git checkout origin/main
-          MAIN_SHA=$(git rev-parse HEAD)
-          echo "MAIN_SHA=${MAIN_SHA}" >> $GITHUB_ENV
-          echo "Preserved main branch at SHA: ${MAIN_SHA}"
-
-      # 2) Build a fresh filtered view of upstream/main as "upstream-split"
-      - name: Rebuild filtered upstream branch
-        run: |
-          # start from upstream/main each run
-          git checkout -B upstream-split upstream/main
-
-          # rewrite to only keep the two packages, move them to your names
+          # Create a temporary directory for the filtered repository
+          TEMP_DIR=$(mktemp -d)
+          echo "TEMP_DIR=${TEMP_DIR}" >> $GITHUB_ENV
+          
+          # Clone upstream repo to temp directory
+          git clone "${UPSTREAM_REPO}" "${TEMP_DIR}/upstream-repo"
+          cd "${TEMP_DIR}/upstream-repo"
+          
+          # Filter to only keep the two packages and rename them
           git filter-repo \
             --force \
             --path packages/expo-location \
             --path packages/expo-notifications \
             --path-rename packages/expo-location:expo-quest-location \
             --path-rename packages/expo-notifications:expo-quest-notifications
+          
+          # Go back to original repo and add the filtered repo as a remote
+          cd "${GITHUB_WORKSPACE}"
+          git remote add filtered-upstream "${TEMP_DIR}/upstream-repo"
+          git fetch filtered-upstream
 
-      # 3) Restore original main and create working branch
+      # 2) Create working branch off main
       - name: Create working branch off main
         run: |
-          # Restore the original main branch from saved SHA
-          git checkout -B main "${MAIN_SHA}"
-          # Now create working branch from restored main
-          git checkout -B "${BRANCH_NAME}" main
+          # Create working branch from main
+          git checkout -B "${BRANCH_NAME}" origin/main || git checkout -B "${BRANCH_NAME}" main
 
-      # 4) Try the merge WITHOUT committing — detect conflicts safely
+      # 3) Try the merge WITHOUT committing — detect conflicts safely
       - name: Attempt no-commit merge to detect conflicts
         id: trymerge
         shell: bash
         run: |
           set -e
           # Try the merge but do not commit yet; do not fast-forward either
-          if git merge --no-commit --no-ff upstream-split; then
+          if git merge --no-commit --no-ff filtered-upstream/main; then
             :
           fi
 
@@ -97,7 +96,7 @@ jobs:
             git commit -m "Merge latest upstream (filtered) into branch ${BRANCH_NAME}"
           fi
 
-      # 5) If no conflicts and there are actual changes, push branch
+      # 4) If no conflicts and there are actual changes, push branch
       - name: Check if branch has changes vs main
         id: haschanges
         if: steps.trymerge.outputs.conflicts == 'false'
@@ -122,7 +121,7 @@ jobs:
         run: |
           git push --force --set-upstream origin "${BRANCH_NAME}"
 
-      # 6) Open the PR (only when there are no conflicts and changes exist)
+      # 5) Open the PR (only when there are no conflicts and changes exist)
       - name: Create PR
         if: steps.trymerge.outputs.conflicts == 'false' && steps.haschanges.outputs.changed == 'true'
         env:
@@ -140,4 +139,13 @@ jobs:
             echo "✅ Opened PR from ${BRANCH_NAME} → main." >> $GITHUB_STEP_SUMMARY
           else
             echo "ℹ️ PR from ${BRANCH_NAME} already exists." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # 6) Cleanup temporary directory
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -n "${TEMP_DIR}" ] && [ -d "${TEMP_DIR}" ]; then
+            rm -rf "${TEMP_DIR}"
+            echo "Cleaned up temporary directory: ${TEMP_DIR}"
           fi
