@@ -1,0 +1,118 @@
+name: expo-quest-location CI
+
+on:
+  pull_request:
+    paths:
+      - 'expo-quest-location/**'
+      - '.github/workflows/expo-quest-location.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'expo-quest-location/**'
+      - '.github/workflows/expo-quest-location.yml'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: expo-quest-location-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'expo-quest-location/package.json'
+
+      - name: Install dependencies
+        working-directory: expo-quest-location
+        run: npm install
+
+      - name: Run linter
+        working-directory: expo-quest-location
+        run: npm run lint
+
+      - name: Run tests
+        working-directory: expo-quest-location
+        run: npm run test
+
+      - name: Build module
+        working-directory: expo-quest-location
+        run: npm run build
+
+  type-check:
+    name: TypeScript Type Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'expo-quest-location/package.json'
+
+      - name: Install dependencies
+        working-directory: expo-quest-location
+        run: npm install
+
+      - name: Type check
+        working-directory: expo-quest-location
+        run: npx tsc --noEmit
+
+  validate-module:
+    name: Validate Expo Module
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'expo-quest-location/package.json'
+
+      - name: Install dependencies
+        working-directory: expo-quest-location
+        run: npm install
+
+      - name: Validate expo-module configuration
+        working-directory: expo-quest-location
+        run: |
+          # Check if expo-module.config.json is valid
+          node -e "console.log('expo-module.config.json is valid JSON:', JSON.stringify(require('./expo-module.config.json'), null, 2))"
+          
+          # Validate package.json structure
+          node -e "
+            const pkg = require('./package.json');
+            if (!pkg.main) throw new Error('Missing main field in package.json');
+            if (!pkg.types) throw new Error('Missing types field in package.json');
+            console.log('Package.json validation passed');
+          "
+
+      - name: Check build output
+        working-directory: expo-quest-location
+        run: |
+          npm run build
+          # Verify build outputs exist
+          test -f build/index.js || (echo "Missing build/index.js" && exit 1)
+          test -f build/index.d.ts || (echo "Missing build/index.d.ts" && exit 1)
+          echo "Build output validation passed"
