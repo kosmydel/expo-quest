@@ -43,7 +43,16 @@ jobs:
           fi
           git fetch upstream --tags --force
 
-      # 1) Build a fresh filtered view of upstream/main as "upstream-split"
+      # 1) Preserve original main branch reference before filter-repo
+      - name: Preserve original main reference
+        run: |
+          # Save the current main branch SHA before filter-repo destroys references
+          git checkout main 2>/dev/null || git checkout origin/main
+          MAIN_SHA=$(git rev-parse HEAD)
+          echo "MAIN_SHA=${MAIN_SHA}" >> $GITHUB_ENV
+          echo "Preserved main branch at SHA: ${MAIN_SHA}"
+
+      # 2) Build a fresh filtered view of upstream/main as "upstream-split"
       - name: Rebuild filtered upstream branch
         run: |
           # start from upstream/main each run
@@ -57,12 +66,15 @@ jobs:
             --path-rename packages/expo-location:expo-quest-location \
             --path-rename packages/expo-notifications:expo-quest-notifications
 
-      # 2) Create a working branch off main that we'll try to merge into
+      # 3) Restore original main and create working branch
       - name: Create working branch off main
         run: |
-          git checkout -B "${BRANCH_NAME}" origin/main || git checkout -B "${BRANCH_NAME}" main
+          # Restore the original main branch from saved SHA
+          git checkout -B main "${MAIN_SHA}"
+          # Now create working branch from restored main
+          git checkout -B "${BRANCH_NAME}" main
 
-      # 3) Try the merge WITHOUT committing — detect conflicts safely
+      # 4) Try the merge WITHOUT committing — detect conflicts safely
       - name: Attempt no-commit merge to detect conflicts
         id: trymerge
         shell: bash
@@ -85,7 +97,7 @@ jobs:
             git commit -m "Merge latest upstream (filtered) into branch ${BRANCH_NAME}"
           fi
 
-      # 4) If no conflicts and there are actual changes, push branch
+      # 5) If no conflicts and there are actual changes, push branch
       - name: Check if branch has changes vs main
         id: haschanges
         if: steps.trymerge.outputs.conflicts == 'false'
@@ -110,7 +122,7 @@ jobs:
         run: |
           git push --force --set-upstream origin "${BRANCH_NAME}"
 
-      # 5) Open the PR (only when there are no conflicts and changes exist)
+      # 6) Open the PR (only when there are no conflicts and changes exist)
       - name: Create PR
         if: steps.trymerge.outputs.conflicts == 'false' && steps.haschanges.outputs.changed == 'true'
         env:
