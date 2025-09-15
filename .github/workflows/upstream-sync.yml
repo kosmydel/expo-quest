@@ -79,27 +79,39 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Try the merge but do not commit yet; do not fast-forward either
-          if git merge --no-commit --no-ff filtered-upstream/main; then
-            :
+          
+          # Try the merge and capture the result
+          MERGE_OUTPUT=$(git merge --no-commit --no-ff filtered-upstream/main 2>&1) || MERGE_RESULT=$?
+          echo "Merge output: $MERGE_OUTPUT"
+          
+          # Check if merge was already up to date
+          if echo "$MERGE_OUTPUT" | grep -q "Already up to date"; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "already_up_to_date=true" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ Already up to date with upstream. No changes to merge." >> $GITHUB_STEP_SUMMARY
+            exit 0
           fi
-
+          
+          # Check for merge conflicts
           if git diff --name-only --diff-filter=U | grep -q .; then
             echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            echo "already_up_to_date=false" >> "$GITHUB_OUTPUT"
             # Abort so the workspace remains clean
             git merge --abort
             echo "❌ Merge produced conflicts. No PR will be created." >> $GITHUB_STEP_SUMMARY
             exit 0
           else
             echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "already_up_to_date=false" >> "$GITHUB_OUTPUT"
             # Make an actual merge commit now
             git commit -m "Merge latest upstream (filtered) into branch ${BRANCH_NAME}"
+            echo "✅ Successfully merged upstream changes." >> $GITHUB_STEP_SUMMARY
           fi
 
       # 4) If no conflicts and there are actual changes, push branch
       - name: Check if branch has changes vs main
         id: haschanges
-        if: steps.trymerge.outputs.conflicts == 'false'
+        if: steps.trymerge.outputs.conflicts == 'false' && steps.trymerge.outputs.already_up_to_date == 'false'
         run: |
           # Compare against origin/main; if equal, skip PR
           git fetch origin main --quiet || true
@@ -117,13 +129,13 @@ jobs:
           fi
 
       - name: Push branch
-        if: steps.trymerge.outputs.conflicts == 'false' && steps.haschanges.outputs.changed == 'true'
+        if: steps.trymerge.outputs.conflicts == 'false' && steps.trymerge.outputs.already_up_to_date == 'false' && steps.haschanges.outputs.changed == 'true'
         run: |
           git push --force --set-upstream origin "${BRANCH_NAME}"
 
       # 5) Open the PR (only when there are no conflicts and changes exist)
       - name: Create PR
-        if: steps.trymerge.outputs.conflicts == 'false' && steps.haschanges.outputs.changed == 'true'
+        if: steps.trymerge.outputs.conflicts == 'false' && steps.trymerge.outputs.already_up_to_date == 'false' && steps.haschanges.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
